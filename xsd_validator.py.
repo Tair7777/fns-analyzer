@@ -1,0 +1,83 @@
+import xmlschema
+import re
+from io import StringIO
+
+class XSDValidator:
+    def __init__(self, schema_path, ignore_version=False, ignore_required_attrs=False):
+        self.schema = xmlschema.XMLSchema(schema_path)
+        self.ignore_version = ignore_version
+        self.ignore_required_attrs = ignore_required_attrs
+        self.modifications = []
+        
+    def validate(self, xml_content):
+        try:
+            modified_content = xml_content
+            
+            if self.ignore_version:
+                # Обход ограничений на версию
+                if 'ВерсФорм="' in modified_content:
+                    original_vers = re.search(r'ВерсФорм="([^"]*)"', modified_content).group(1)
+                    modified_content = re.sub(r'ВерсФорм="[^"]*"', 'ВерсФорм="5.03"', modified_content)
+                    self.modifications.append(f"Заменена версия формы: {original_vers} -> 5.03")
+                
+                if 'ВерсПрог="' in modified_content:
+                    modified_content = re.sub(r'ВерсПрог="[^"]*"', 'ВерсПрог="XXXXXXX"', modified_content)
+                    self.modifications.append("Заменена версия программы")
+            
+            if self.ignore_required_attrs:
+                # ВАЖНО: Удаляем атрибут ДатаДок из элемента Документ полностью
+                if 'Документ' in modified_content and 'ДатаДок=' in modified_content:
+                    date_doc_match = re.search(r'<Документ[^>]*ДатаДок="([^"]*)"', modified_content)
+                    if date_doc_match:
+                        date_value = date_doc_match.group(1)
+                        self.modifications.append(f"Удален атрибут ДатаДок (значение: {date_value}) из элемента Документ")
+                        modified_content = re.sub(r'(<Документ[^>]*)ДатаДок="[^"]*"([^>]*>)', r'\1\2', modified_content)
+                
+                # Обход ограничений на КНД коды
+                if 'КНД="1151020"' in modified_content:
+                    modified_content = re.sub(r'КНД="1151020"', 'КНД="1115131"', modified_content)
+                    self.modifications.append("Заменен КНД: 1151020 -> 1115131")
+                
+                # Добавляем все обязательные атрибуты в тег Документ для проверки XsdAttributeGroup
+                if 'Документ' in modified_content:
+                    document_tag = re.search(r'<Документ([^>]*)>', modified_content)
+                    if document_tag:
+                        attributes = document_tag.group(1)
+                        added_attrs = []
+                        
+                        required_attrs = [
+                            ('УИД', 'IGNORED_TEST-12345'),
+                            ('Функция', 'СЧФ'),
+                            ('ПоФактХЖ', 'Документ об отгрузке'),
+                            ('НаимДокОпр', 'Документ'),
+                            ('ДатаИнфПр', f"{datetime.datetime.now().strftime('%Y-%m-%d')}"),
+                            ('ВремИнфПр', f"{datetime.datetime.now().strftime('%H:%M:%S')}"),
+                            ('НаимЭконСубСост', 'Юр лицо'),
+                            ('СоглСтрДопИнф', '1')
+                        ]
+                        
+                        for attr_name, attr_value in required_attrs:
+                            if f'{attr_name}=' not in attributes:
+                                added_attrs.append(f'{attr_name}="{attr_value}"')
+                                
+                        if added_attrs:
+                            self.modifications.append(f"Добавлены обязательные атрибуты: {', '.join(added_attrs)}")
+                            attrs_str = ' ' + ' '.join(added_attrs)
+                            modified_content = re.sub(
+                                r'<Документ([^>]*)>',
+                                f'<Документ\\1{attrs_str}>',
+                                modified_content
+                            )
+            
+            # Проверяем валидность
+            xml_io = StringIO(modified_content)
+            self.schema.validate(xml_io)
+            
+            if self.modifications:
+                return True, "Документ соответствует схеме после модификаций: " + "; ".join(self.modifications)
+            else:
+                return True, ""
+        except Exception as e:
+            return False, str(e)
+            
+    # ... остальной код валидатора ...

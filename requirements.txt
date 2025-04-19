@@ -1,0 +1,5 @@
+streamlit
+xmlschema
+python-docx
+reportlab
+chardet
